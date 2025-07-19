@@ -6,7 +6,10 @@ import os
 
 app = Flask(__name__)
 
-BASE = "Qwen/Qwen1.5-1.8B-Chat"
+# Token de acesso (pode trocar por uma variável de ambiente)
+API_TOKEN = "#tikatu"
+
+BASE = "Qwen/Qwen2.5-3B-Instruct"
 ADAPTER = "model/adapter_model.safetensors"
 
 bnb_config = BitsAndBytesConfig(
@@ -20,15 +23,34 @@ model = AutoModelForCausalLM.from_pretrained(BASE, quantization_config=bnb_confi
 tokenizer = AutoTokenizer.from_pretrained(BASE)
 model = PeftModel.from_pretrained(model, ADAPTER)
 
-@app.route("/gerar", methods=["POST"])
+@app.route('/gerar', methods=['POST'])
 def gerar():
-    dados = request.json.get("dados", "")
-    prompt = f"Você é um analista ambiental especializado em qualidade da água. Gere um relatório técnico com base nos seguintes dados:\n{dados}"
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    # Verifica se o token foi enviado e está correto
+    token = request.headers.get('Authorization')
+    if token != f"Bearer {API_TOKEN}":
+        return jsonify({'erro': 'Acesso não autorizado'}), 401
+
+    dados = request.json.get('dados', '')
+    if not dados:
+        return jsonify({'erro': 'Dados ausentes'}), 400
+
+    # Geração do relatório
+    prompt_final = (
+        "Você é um analista ambiental especializado em qualidade da água..."
+        f"\n\nDados: {dados}\n\nRelatório:\n"
+    )
+    inputs = tokenizer(prompt_final, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=512)
-    resposta = tokenizer.decode(output[0], skip_special_tokens=True)
-    return jsonify({"relatorio": resposta})
+        saida = model.generate(
+            **inputs,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+            eos_token_id=tokenizer.eos_token_id
+        )
+    resposta = tokenizer.decode(saida[0], skip_special_tokens=True)
+    return jsonify({'relatorio': resposta.replace(prompt_final.strip(), "").strip()})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
